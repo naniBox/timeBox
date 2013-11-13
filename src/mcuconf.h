@@ -40,11 +40,11 @@
 #define STM32_HSI14_ENABLED                 TRUE
 #define STM32_LSI_ENABLED                   TRUE
 #define STM32_HSE_ENABLED                   TRUE
-#define STM32_LSE_ENABLED                   TRUE
+#define STM32_LSE_ENABLED                   FALSE
 #define STM32_SW                            STM32_SW_PLL
 #define STM32_PLLSRC                        STM32_PLLSRC_HSE
-#define STM32_PREDIV_VALUE                  13
-#define STM32_PLLMUL_VALUE                  16
+#define STM32_PREDIV_VALUE                  2
+#define STM32_PLLMUL_VALUE                  2
 #define STM32_HPRE                          STM32_HPRE_DIV1
 #define STM32_PPRE                          STM32_PPRE_DIV1
 #define STM32_ADCSW                         STM32_ADCSW_HSI14
@@ -55,7 +55,7 @@
 #define STM32_CECSW                         STM32_CECSW_HSI
 #define STM32_I2C1SW                        STM32_I2C1SW_HSI
 #define STM32_USART1SW                      STM32_USART1SW_PCLK
-#define STM32_RTCSEL                        STM32_RTCSEL_LSE
+#define STM32_RTCSEL                        STM32_RTCSEL_LSI
 
 /*
  * ADC driver system settings.

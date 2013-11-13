@@ -41,18 +41,18 @@
 
  */
 
-#define LTC_SHORT_MAX_US				300
-#define LTC_SHORT_MIN_US				160
+#define LTC_SHORT_MAX_US				280
+#define LTC_SHORT_MIN_US				130
 
 #define LTC_LONG_MAX_US					580
-#define LTC_LONG_MIN_US					350
+#define LTC_LONG_MIN_US					330
 
 #define IS_LTC_LONG(x)	(((x)<LTC_LONG_MAX_US)  && ((x)>LTC_LONG_MIN_US))
 #define IS_LTC_SHORT(x)	(((x)<LTC_SHORT_MAX_US) && ((x)>LTC_SHORT_MIN_US))
 
 #define LTC_SYNC_WORD 					(0xBFFC)
 
-#define LTC_TIMER						TIM3
+TIM_TypeDef * LTC_TIMER;
 
 extern void setLTC(smpte_timecode_t * tc);
 
@@ -105,13 +105,22 @@ static void ltc_store(uint8_t bit_set)
 
 #define RTT2US(ticks) ((ticks) / (STM32_HCLK / 1000000UL))
 
+uint16_t this_edge_time;
+uint32_t timediff;
+uint16_t this_edge_time_s;
+uint32_t timediff_s;
+uint16_t this_edge_time_l;
+uint32_t timediff_l;
+uint16_t this_edge_time_o;
+uint32_t timediff_o;
+
 //-----------------------------------------------------------------------------
 void ltc_exti_cb(EXTDriver *extp, expchannel_t channel)
 {
 	(void)extp;
 	(void)channel;
-	uint16_t this_edge_time = LTC_TIMER->CNT;
-	uint32_t timediff = RTT2US(this_edge_time);
+	this_edge_time = LTC_TIMER->CNT;
+	timediff = RTT2US(this_edge_time);
 	LTC_TIMER->CNT = 0;
 
 	/*
@@ -124,11 +133,15 @@ void ltc_exti_cb(EXTDriver *extp, expchannel_t channel)
 	*/
 	if ( IS_LTC_LONG(timediff) )
 	{
+		this_edge_time_l = this_edge_time;
+		timediff_l = timediff;
 		ltc_store(0);
 		was_last_edge_short = FALSE;
 	}
 	else if ( IS_LTC_SHORT(timediff) )
 	{
+		this_edge_time_s = this_edge_time;
+		timediff_s = timediff;
 		if ( was_last_edge_short )
 		{
 			ltc_store(1);
@@ -143,6 +156,8 @@ void ltc_exti_cb(EXTDriver *extp, expchannel_t channel)
 	}
 	else
 	{
+		this_edge_time_o = this_edge_time;
+		timediff_o = timediff;
 		// @TODO: if too many errors are happening, maybe we need to start
 		// 	implementing a clock-tracking algorithm
 		//other_count++;
@@ -162,6 +177,7 @@ int kuroBoxTimeInit(void)
 	memset(&ltc_frame,0,sizeof(ltc_frame));
 	rccEnableTIM3(FALSE);
 	rccResetTIM3();
+	LTC_TIMER = TIM3;
 	LTC_TIMER->CR1 |= TIM_CR1_CEN;
 	return 0;
 }

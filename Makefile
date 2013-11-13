@@ -3,10 +3,15 @@
 # NOTE: Can be overridden externally.
 #
 
+DEBUG_BUILD = yes
+
 # Compiler options here.
 ifeq ($(USE_OPT),)
-#  USE_OPT = -O2 -ggdb -fomit-frame-pointer -falign-functions=16 -std=gnu99
+ifeq ($(DEBUG_BUILD),yes)
   USE_OPT = -O0 -ggdb -fomit-frame-pointer -falign-functions=16 -std=gnu99
+else
+  USE_OPT = -O2 -fomit-frame-pointer -falign-functions=16 -std=gnu99
+endif
 endif
 
 # C specific options here (added to USE_OPT).
@@ -56,7 +61,12 @@ endif
 #
 
 # Define project name here
-PROJECT = timeBox
+ifeq ($(DEBUG_BUILD),yes)
+	PROJECT = timeBox_d
+	#BUILDDIR = build_d
+else
+	PROJECT = timeBox
+endif
 
 # Imported source files and paths
 CHIBIOS = ../../chibios
@@ -80,6 +90,7 @@ CSRC = $(PORTSRC) \
        $(CHIBIOS)/os/various/chprintf.c \
        $(CHIBIOS)/os/various/chrtclib.c \
        ./src/main.c \
+       ./src/seg77.c \
        ./src/ltc_time.c
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global

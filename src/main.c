@@ -27,9 +27,15 @@
 #include <chprintf.h>
 #include <chrtclib.h>
 #include "ltc_time.h"
+#include "seg77.h"
+
+//-----------------------------------------------------------------------------
+#define CALIBRATION_MODE
 
 //-----------------------------------------------------------------------------
 #define DISPLAY_TIMEOUT 5000
+
+#define prnt ((BaseSequentialStream *)&SD1)
 
 //-----------------------------------------------------------------------------
 static uint8_t DISPLAY_MAP[] = {0xee, 0x82, 0xdc, 0xd6, 0xb2, 0x76, 0x7e, 0xc2, 0xfe, 0xf6}; // 77seg driver shifter
@@ -39,8 +45,18 @@ static uint8_t display_data[8];
 static bool_t valid_timecode;
 smpte_timecode_t linear_timecode;
 void btn_1_exti_cb(EXTDriver *extp, expchannel_t channel);
+void pps_cb(EXTDriver *extp, expchannel_t channel);
 bool_t btn_1_pressed;
 static VirtualTimer display_off_vt;
+
+extern uint16_t this_edge_time;
+extern uint32_t timediff;
+extern uint16_t this_edge_time_s;
+extern uint32_t timediff_s;
+extern uint16_t this_edge_time_l;
+extern uint32_t timediff_l;
+extern uint16_t this_edge_time_o;
+extern uint32_t timediff_o;
 
 //-----------------------------------------------------------------------------
 static const EXTConfig extcfg = {
@@ -49,7 +65,11 @@ static const EXTConfig extcfg = {
 	{EXT_CH_MODE_BOTH_EDGES | EXT_CH_MODE_AUTOSTART | EXT_MODE_GPIOA, ltc_exti_cb},	// 1
     {EXT_CH_MODE_DISABLED, NULL},	// 2
     {EXT_CH_MODE_DISABLED, NULL},	// 3
+#ifdef CALIBRATION_MODE
+	{EXT_CH_MODE_FALLING_EDGE | EXT_CH_MODE_AUTOSTART | EXT_MODE_GPIOA, pps_cb},	// 4
+#else
     {EXT_CH_MODE_DISABLED, NULL},	// 4
+#endif
     {EXT_CH_MODE_DISABLED, NULL},	// 5
     {EXT_CH_MODE_DISABLED, NULL},	// 6
     {EXT_CH_MODE_DISABLED, NULL},	// 7
@@ -101,6 +121,14 @@ void btn_1_exti_cb(EXTDriver *extp, expchannel_t channel)
 }
 
 //-----------------------------------------------------------------------------
+void
+pps_cb(EXTDriver *extp, expchannel_t channel)
+{
+	(void)extp;
+	(void)channel;
+}
+
+//-----------------------------------------------------------------------------
 void spi_end_cb(SPIDriver * spip)
 {
 	spiUnselectI(spip);
@@ -108,11 +136,11 @@ void spi_end_cb(SPIDriver * spip)
 
 //-----------------------------------------------------------------------------
 static const SPIConfig spicfg = {
-  spi_end_cb,
-  GPIOA,
-  GPIOA_SPI1_CS,
-  0,//SPI_CR1_BR_2 | SPI_CR1_BR_1,
-  SPI_CR2_DS_2 | SPI_CR2_DS_1 | SPI_CR2_DS_0
+	spi_end_cb,
+	GPIOA,
+	GPIOA_SPI1_CS,
+	SPI_CR1_BR_2 | SPI_CR1_BR_1,
+	SPI_CR2_DS_2 | SPI_CR2_DS_1 | SPI_CR2_DS_0
 };
 
 //-----------------------------------------------------------------------------
@@ -122,6 +150,7 @@ static msg_t display_run(void * arg)
 {
 	(void)arg;
 	chRegSetThreadName("display");
+	//int8_t last_second = -1;
 	while ( !chThdShouldTerminate() )
 	{
 		msg_t ret = RDY_OK;
@@ -167,6 +196,19 @@ static msg_t display_run(void * arg)
 
 		spiSelect(&SPID1);
 		spiStartSend(&SPID1,sizeof(display_data), display_data);
+
+		if (linear_timecode.frames%2 == 0 )
+		{
+			//last_second = linear_timecode.seconds;
+			chprintf(prnt, "%.2d:%.2d:%.2d.%.2d",
+					linear_timecode.hours, linear_timecode.minutes,
+					linear_timecode.seconds, linear_timecode.frames);
+			chprintf(prnt, " // t: %7d, d: %4d", this_edge_time, timediff);
+			chprintf(prnt, " // t: %7d, d: %4d", this_edge_time_s, timediff_s);
+			chprintf(prnt, " // t: %7d, d: %4d", this_edge_time_l, timediff_l);
+			chprintf(prnt, " // t: %7d, d: %4d", this_edge_time_o, timediff_o);
+			chprintf(prnt, "\n");
+		}
 	}
 	return 0;
 }
@@ -195,208 +237,11 @@ static msg_t blink_run(void *arg)
 	while ( !chThdShouldTerminate() )
 	{
 		palClearPad(GPIOB, GPIOB_LED1);
-		chThdSleepMilliseconds(500);
+		chThdSleepMilliseconds(10);
 		palSetPad(GPIOB, GPIOB_LED1);
-		chThdSleepMilliseconds(500);
+		chThdSleepMilliseconds(10);
 	}
 	return 0;
-}
-
-//-----------------------------------------------------------------------------
-void
-changeToSPI(void)
-{
-	palSetPadMode(GPIOA, GPIOA_SPI1_SCK, PAL_MODE_ALTERNATE(0)  | PAL_STM32_OSPEED_HIGHEST);
-	palSetPadMode(GPIOA, GPIOA_SPI1_MISO, PAL_MODE_ALTERNATE(0) | PAL_STM32_OSPEED_HIGHEST);
-	palSetPadMode(GPIOA, GPIOA_SPI1_MOSI, PAL_MODE_ALTERNATE(0) | PAL_STM32_OSPEED_HIGHEST);
-	palSetPad(GPIOA, GPIOA_SPI1_CS);
-	palSetPadMode(GPIOA, GPIOA_SPI1_CS, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
-}
-
-//-----------------------------------------------------------------------------
-void
-changeToGPIO(void)
-{
-	palSetPadMode(GPIOA, GPIOA_SPI1_SCK, PAL_MODE_OUTPUT_PUSHPULL  | PAL_STM32_OSPEED_HIGHEST);
-	palSetPadMode(GPIOA, GPIOA_SPI1_MISO, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
-	palSetPadMode(GPIOA, GPIOA_SPI1_MOSI, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
-	palSetPad(GPIOA, GPIOA_SPI1_CS);
-	palSetPadMode(GPIOA, GPIOA_SPI1_CS, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
-}
-
-//-----------------------------------------------------------------------------
-void
-toConfig(void)
-{
-	changeToGPIO();
-
-	for ( int i = 0 ; i < 8 ; i++ )
-	{
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_MISO);
-		palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		palClearPad(GPIOA, GPIOA_SPI1_CS);
-		palClearPad(GPIOA, GPIOA_7SEG_OE);
-
-		// 1
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 2
-		palSetPad(GPIOA, GPIOA_7SEG_OE);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 3
-		palClearPad(GPIOA, GPIOA_7SEG_OE);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 4
-		palSetPad(GPIOA, GPIOA_SPI1_CS);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 5
-		palClearPad(GPIOA, GPIOA_SPI1_CS);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 6
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 7
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 8
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-	}
-}
-
-//-----------------------------------------------------------------------------
-void
-toData(void)
-{
-	for ( int i = 0 ; i < 8 ; i++ )
-	{
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_MISO);
-		palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		palClearPad(GPIOA, GPIOA_SPI1_CS);
-		palClearPad(GPIOA, GPIOA_7SEG_OE);
-
-		// 1
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 2
-		palSetPad(GPIOA, GPIOA_7SEG_OE);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 3
-		palClearPad(GPIOA, GPIOA_7SEG_OE);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 4
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 5
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 6
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 7
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 8
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-	}
-
-	changeToSPI();
-}
-
-
-//-----------------------------------------------------------------------------
-void
-adjust_current(uint8_t div)
-{
-	chSysLock();
-	toConfig();
-#define IF_BIT(x) ((x>>7) & 0x01)
-
-	for ( int i = 0 ; i < 8 ; i++ )
-	{
-		uint8_t d = div;
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_MISO);
-		palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		palClearPad(GPIOA, GPIOA_SPI1_CS);
-		palClearPad(GPIOA, GPIOA_7SEG_OE);
-
-		// 1
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 2
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 3
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 4
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 5
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 6
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 7
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-
-		// 8
-		if (IF_BIT(d)) palSetPad(GPIOA, GPIOA_SPI1_MOSI); else palClearPad(GPIOA, GPIOA_SPI1_MOSI);
-		d <<= 1;
-		palSetPad(GPIOA, GPIOA_SPI1_CS);
-		palSetPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_SCK);
-		palClearPad(GPIOA, GPIOA_SPI1_CS);
-	}
-
-	toData();
-	chSysUnlock();
 }
 
 //-----------------------------------------------------------------------------
@@ -411,9 +256,10 @@ int main(void)
 	palClearPad(GPIOB, GPIOB_LED1);
 	palClearPad(GPIOB, GPIOB_LED2);
 
-	changeToSPI();
+	seg77_change_to_spi();
 
 	palSetPadMode(GPIOA, GPIOA_7SEG_OE, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
+	seg77_adjust_current(0, 0, 63);
 	palClearPad(GPIOA, GPIOA_7SEG_OE);
 
 	spiStart(&SPID1, &spicfg);
@@ -425,7 +271,6 @@ int main(void)
 
 	extStart(&EXTD1, &extcfg);
 
-	BaseSequentialStream * prnt = (BaseSequentialStream *)&SD1;
 	chprintf(prnt, "%s\n\r\n\r%d\n\r\n\r", BOARD_NAME, STM32_HCLK);
 
 	chSysLock();
@@ -458,6 +303,7 @@ int main(void)
 		spiStartSend(&SPID1, sizeof(display_data), display_data);
 
 		*/
-		chThdSleepMilliseconds(25);
+
+		chThdSleepMilliseconds(250);
 	}
 }
